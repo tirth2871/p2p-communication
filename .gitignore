@@ -1,0 +1,24 @@
+# Build output - never commit these
+build/
+
+# CubeIDE/CubeMX generated IDE files — not needed for Makefile builds
+*.launch
+.cproject
+.project
+.settings/
+
+# Windows junk
+Thumbs.db
+desktop.ini
+
+# VSCode workspace settings (optional — remove this if you want to share your vscode config)
+.vscode/
+
+# Object/dependency files (already in build/ but just in case)
+*.o
+*.d
+*.lst
+*.map
+*.elf
+*.hex
+*.bin
