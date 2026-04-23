@@ -71,3 +71,12 @@ void RS485_IRQHandler(void) {
         _ring_write(byte);
     }
 }
+
+uint8_t RS485_ReadByte(uint8_t *out)
+{
+    if (rs485_rxbuf.count == 0) return 0; // no data
+    *out = rs485_rxbuf.buf[rs485_rxbuf.tail];
+    rs485_rxbuf.tail = (rs485_rxbuf.tail + 1) % RS485_BUF_SIZE;
+    rs485_rxbuf.count--;
+    return 1;
+}

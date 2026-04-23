@@ -36,5 +36,6 @@ void    RS485_RX_Mode(void);
 void    RS485_Send(uint8_t *data, uint16_t len);
 uint8_t RS485_MessageReady(uint8_t *out_buf, uint16_t *out_len);
 void    RS485_IRQHandler(void);
+uint8_t RS485_ReadByte(uint8_t *out);
 
 #endif

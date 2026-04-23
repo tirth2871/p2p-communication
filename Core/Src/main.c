@@ -21,11 +21,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
 #include "stm32f4xx_hal.h"
 #include <string.h>
 #include "rs485.h"
-
+#include "packet.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -116,51 +115,134 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    // #if NODE_ID == 1
+    //   // Mode 1: Send -> wait for ACK
+    //   uint8_t msg[] = "Hello from Node1\n";
+    //   RS485_Send(msg, sizeof(msg) - 1);
+
+    //   uint8_t ack_buffer[RS485_MSG_MAX];
+    //   uint16_t ack_len;
+    //   uint32_t start_time = HAL_GetTick();
+
+    //   while ((HAL_GetTick() - start_time) < RS485_TIMEOUT_MS)
+    //   {
+    //     if (RS485_MessageReady(ack_buffer, &ack_len))
+    //     {
+    //       if (strncmp((char*)ack_buffer, "ACK", 3) == 0)
+    //       {
+    //         // ACK received
+    //         for(int i = 1; i < 3; i++) {
+    //           HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET); // toggle LED on ACK
+    //           HAL_Delay(100);
+    //           HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
+    //           HAL_Delay(100);
+    //         }  
+    //       }
+    //       break;
+    //     }
+    //   }
+    //   HAL_Delay(3000); // wait before sending next message
+    
     #if NODE_ID == 1
-      // Mode 1: Send -> wait for ACK
-      uint8_t msg[] = "Hello from Node1\n";
-      RS485_Send(msg, sizeof(msg) - 1);
+      // Node 1: build packet -> Send -> wait for ACK
+      uint8_t payload[] = "Hello from Node1";
+      uint8_t tx_buffer[PKT_MAX_TOTAL];
+      uint16_t tx_len = PKT_Build(NODE_ID, MSG_DATA, payload, sizeof(payload) - 1, tx_buffer);
+      RS485_Send(tx_buffer, tx_len);
 
-      uint8_t ack_buffer[RS485_MSG_MAX];
-      uint16_t ack_len;
       uint32_t start_time = HAL_GetTick();
-
-      while ((HAL_GetTick() - start_time) < RS485_TIMEOUT_MS)
+      uint8_t got_ack = 0;
+      
+      while((HAL_GetTick() - start_time) < RS485_TIMEOUT_MS)
       {
-        if (RS485_MessageReady(ack_buffer, &ack_len))
+        uint8_t byte;
+        //drain all bytes from ring buffer into parser
+        while(RS485_ReadByte(&byte))
         {
-          if (strncmp((char*)ack_buffer, "ACK", 3) == 0)
+          Packet rx_pkt;
+          uint8_t result = PKT_Parse(byte, &rx_pkt);
+          if(result == 1)
           {
-            // ACK received
-            for(int i = 1; i < 3; i++) {
-              HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET); // toggle LED on ACK
-              HAL_Delay(100);
-              HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
-              HAL_Delay(100);
-            }  
+            // valid packet - check if it's an ACK from Node 2
+            if(rx_pkt.msg_type == MSG_ACK && rx_pkt.node_id == 2)
+            {
+              got_ack = 1;
+            }
           }
-          break;
+          // result == 2 means CRC error - sliently discard  
         }
+        if(got_ack) break;
+      }
+
+      if(got_ack)
+      {
+        // 3 quick blinks = ACK received
+        for(int i = 1; i < 3; i++) {
+          HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET); // toggle LED on ACK
+          HAL_Delay(100);
+          HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
+          HAL_Delay(100);
+        }  
       }
       HAL_Delay(3000); // wait before sending next message
 
+    // #elif NODE_ID == 2
+    //   // Node 2: Receive -> LED -> ACK
+    //   uint8_t rx_buffer[RS485_MSG_MAX];
+    //   uint16_t rx_len;
+
+    //   if (RS485_MessageReady(rx_buffer, &rx_len))
+    //   {
+    //     // Message received
+    //     // 1 long red blink = message received
+    //     HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_SET); // toggle LED on message receive
+    //     HAL_Delay(500);
+    //     HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_RESET);
+    //     HAL_Delay(1); // guard before TX switch
+
+    //     // Send ACK back to sender
+    //     uint8_t ack[] = "ACK\n";
+    //     RS485_Send(ack, 4);
+    //   }
+
     #elif NODE_ID == 2
-      // Node 2: Receive -> LED -> ACK
-      uint8_t rx_buffer[RS485_MSG_MAX];
-      uint16_t rx_len;
-
-      if (RS485_MessageReady(rx_buffer, &rx_len))
+      // Node 2: parse incoming bytes -> validate -> ACK
+      uint8_t byte;
+      while(RS485_ReadByte(&byte))
       {
-        // Message received
-        // 1 long red blink = message received
-        HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_SET); // toggle LED on message receive
-        HAL_Delay(500);
-        HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_RESET);
-        HAL_Delay(1); // guard before TX switch
+        Packet rx_pkt;
+        uint8_t result = PKT_Parse(byte, &rx_pkt);
+        
+        if(result == 1)
+        {
+          // valid packet - check if it's a data message from Node 1
+          if(rx_pkt.msg_type == MSG_DATA)
+          {
+            // 1 long red blink = good packet
+            HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_SET); // toggle LED on message receive
+            HAL_Delay(500);
+            HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_RESET);
+            HAL_Delay(1); // guard before TX switch
 
-        // Send ACK back to sender
-        uint8_t ack[] = "ACK\n";
-        RS485_Send(ack, 4);
+            // Send ACK back to sender
+            uint8_t ack_buffer[PKT_MAX_TOTAL];
+            uint16_t ack_len = PKT_Build(NODE_ID, MSG_ACK, NULL, 0, ack_buffer);
+            HAL_Delay(1); // guard before TX switch
+            RS485_Send(ack_buffer, ack_len);
+          }
+        }
+        // result == 2 means CRC error - sliently discard 
+        else if(result == 2)
+        {
+          // crC error - rapid orange blink to signal corruption
+          for(int i = 0; i < 5; i++)
+          {
+            HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_SET); // toggle LED on CRC error
+            HAL_Delay(50);
+            HAL_GPIO_WritePin(GPIOD, LD3_Pin, GPIO_PIN_RESET);
+            HAL_Delay(50);
+          }
+        }
       }
 
     #else
