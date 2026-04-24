@@ -13,7 +13,7 @@ static void _ring_write(uint8_t byte) {
 /* ── Direction control ───────────────────────────────────── */
 void RS485_TX_Mode(void) {
     HAL_GPIO_WritePin(RS485_DIR_PORT, RS485_DIR_PIN, GPIO_PIN_SET);
-    for (volatile int i = 0; i < 100; i++); // let transceiver switch
+    for (volatile int i = 0; i < 1000; i++); // let transceiver switch
 }
 
 void RS485_RX_Mode(void) {
@@ -37,7 +37,20 @@ void RS485_Send(uint8_t *data, uint16_t len) {
     HAL_UART_Transmit(&huart2, data, len, HAL_MAX_DELAY);
     // wait for last bit to physically leave the wire before switching
     while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TC) == RESET);
+    HAL_Delay(5); // add 2ms after TC before switching back
     RS485_RX_Mode();
+    HAL_Delay(5); // let transceiver switch before accepting bytes
+
+    // flush anything that arrived during TX or switching transient
+    while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE)) {
+        volatile uint8_t dummy = (uint8_t)(huart2.Instance->DR & 0xFF);
+        (void)dummy;
+    }
+
+    // also flush ring buffer
+    rs485_rxbuf.head  = 0;
+    rs485_rxbuf.tail  = 0;
+    rs485_rxbuf.count = 0;
 }
 
 /* ── Check if '\n'-terminated message is in buffer ──────── */

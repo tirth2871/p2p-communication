@@ -26,7 +26,7 @@ uint16_t PKT_CRC16(uint8_t *data, uint16_t len)
 
 /* ── Build a packet into out_buf ─────────────────────────── */
 /* Returns total number of bytes written                      */
-uint16_t PKT_Build(uint8_t node_id, uint8_t msg_type,
+uint16_t PKT_Build(uint8_t node_id, uint8_t msg_type, uint8_t seq,
                    uint8_t *payload, uint8_t payload_len,
                    uint8_t *out_buf)
 {
@@ -39,6 +39,7 @@ uint16_t PKT_Build(uint8_t node_id, uint8_t msg_type,
     out_buf[idx++] = PKT_START_BYTE;
     out_buf[idx++] = node_id;
     out_buf[idx++] = msg_type;
+    out_buf[idx++] = seq;
     out_buf[idx++] = payload_len;
 
     // payload
@@ -93,6 +94,12 @@ uint8_t PKT_Parse(uint8_t byte, Packet *out_pkt)
         case PARSE_MSG_TYPE:
             pkt.msg_type   = byte;
             raw[raw_idx++] = byte;
+            state          = PARSE_SEQ;
+            break;
+
+        case PARSE_SEQ:
+            pkt.seq        = byte;
+            raw[raw_idx++] = byte;
             state          = PARSE_LENGTH;
             break;
 
@@ -122,17 +129,22 @@ uint8_t PKT_Parse(uint8_t byte, Packet *out_pkt)
             break;
 
         case PARSE_CRC_LOW:
+        {
             pkt.crc |= byte;               // combine low byte
             state    = PARSE_WAIT_START;   // reset for next packet
 
             // verify CRC
             uint16_t expected = PKT_CRC16(raw, raw_idx);
-            if (pkt.crc == expected) {
+            if (pkt.crc == expected)
+            {
                 *out_pkt = pkt;
                 return 1; // valid packet
-            } else {
+            }
+            else
+            {
                 return 2; // CRC error
             }
+        }
     }
     return 0; // still waiting
 }

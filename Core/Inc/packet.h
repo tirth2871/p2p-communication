@@ -1,5 +1,5 @@
 /* ============================================================
- * Project      : P2P RS-485 — Phase 3
+ * Project      : P2P RS-485 — Phase 4
  * MCU          : STM32F407G-DISC1
  * Description  : Packet framing, CRC16, message types
  * ============================================================ */
@@ -13,13 +13,17 @@
 /* ── Packet constants ────────────────────────────────────── */
 #define PKT_START_BYTE      0xAA    // every packet begins with this
 #define PKT_MAX_PAYLOAD     32      // max bytes of payload data
-#define PKT_OVERHEAD        6       // START + NODE_ID + MSG_TYPE + LENGTH + CRC_H + CRC_L
+#define PKT_OVERHEAD        7       // START + NODE_ID + MSG_TYPE + LENGTH + CRC_H + CRC_L
 #define PKT_MAX_TOTAL       (PKT_OVERHEAD + PKT_MAX_PAYLOAD)
 
 /* ── Message types ───────────────────────────────────────── */
 #define MSG_DATA            0x01    // data message
 #define MSG_ACK             0x02    // acknowledgement
 #define MSG_ERROR           0x03    // error response
+
+/* ── Retry Configurations ────────────────────────────────── */
+#define PKT_MAX_RETRIES     3       // max number of retry attempts
+#define PKT_ACK_TIMEOUT_MS  600    // timeout for each retry attempt (in milliseconds)
 
 /* ── Packet structure ────────────────────────────────────── */
 /*
@@ -35,6 +39,7 @@
 typedef struct {
     uint8_t  node_id;
     uint8_t  msg_type;
+    uint8_t  seq;
     uint8_t  length;
     uint8_t  payload[PKT_MAX_PAYLOAD];
     uint16_t crc;
@@ -45,6 +50,7 @@ typedef enum {
     PARSE_WAIT_START,
     PARSE_NODE_ID,
     PARSE_MSG_TYPE,
+    PARSE_SEQ,
     PARSE_LENGTH,
     PARSE_PAYLOAD,
     PARSE_CRC_HIGH,
@@ -53,7 +59,7 @@ typedef enum {
 
 /* ── API ─────────────────────────────────────────────────── */
 uint16_t PKT_CRC16(uint8_t *data, uint16_t len);
-uint16_t PKT_Build(uint8_t node_id, uint8_t msg_type,
+uint16_t PKT_Build(uint8_t node_id, uint8_t msg_type, uint8_t seq,
                    uint8_t *payload, uint8_t payload_len,
                    uint8_t *out_buf);
 uint8_t  PKT_Parse(uint8_t byte, Packet *out_pkt);

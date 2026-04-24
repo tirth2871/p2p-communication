@@ -100,12 +100,6 @@ int main(void)
 
   RS485_Init(); // enables RXNE interrupt, sets RX mode
 
-  // RS485_RX_Mode(); // always start in receive mode
-  
-  // #if NODE_ID == 1
-  //   uint8_t msg[] = "Hello from STM32F4!\r\n";
-  // #endif
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -115,98 +109,71 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    // #if NODE_ID == 1
-    //   // Mode 1: Send -> wait for ACK
-    //   uint8_t msg[] = "Hello from Node1\n";
-    //   RS485_Send(msg, sizeof(msg) - 1);
-
-    //   uint8_t ack_buffer[RS485_MSG_MAX];
-    //   uint16_t ack_len;
-    //   uint32_t start_time = HAL_GetTick();
-
-    //   while ((HAL_GetTick() - start_time) < RS485_TIMEOUT_MS)
-    //   {
-    //     if (RS485_MessageReady(ack_buffer, &ack_len))
-    //     {
-    //       if (strncmp((char*)ack_buffer, "ACK", 3) == 0)
-    //       {
-    //         // ACK received
-    //         for(int i = 1; i < 3; i++) {
-    //           HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET); // toggle LED on ACK
-    //           HAL_Delay(100);
-    //           HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
-    //           HAL_Delay(100);
-    //         }  
-    //       }
-    //       break;
-    //     }
-    //   }
-    //   HAL_Delay(3000); // wait before sending next message
     
     #if NODE_ID == 1
-      // Node 1: build packet -> Send -> wait for ACK
+      // Node 1: build packet -> Send -> wait for ACK -> with retry capability
+      static uint8_t seq = 0;
       uint8_t payload[] = "Hello from Node1";
       uint8_t tx_buffer[PKT_MAX_TOTAL];
-      uint16_t tx_len = PKT_Build(NODE_ID, MSG_DATA, payload, sizeof(payload) - 1, tx_buffer);
-      RS485_Send(tx_buffer, tx_len);
-
-      uint32_t start_time = HAL_GetTick();
+      uint16_t tx_len = PKT_Build(NODE_ID, MSG_DATA, seq, payload, sizeof(payload) - 1, tx_buffer);
       uint8_t got_ack = 0;
-      
-      while((HAL_GetTick() - start_time) < RS485_TIMEOUT_MS)
-      {
-        uint8_t byte;
-        //drain all bytes from ring buffer into parser
-        while(RS485_ReadByte(&byte))
-        {
-          Packet rx_pkt;
-          uint8_t result = PKT_Parse(byte, &rx_pkt);
-          if(result == 1)
-          {
-            // valid packet - check if it's an ACK from Node 2
-            if(rx_pkt.msg_type == MSG_ACK && rx_pkt.node_id == 2)
-            {
-              got_ack = 1;
-            }
-          }
-          // result == 2 means CRC error - sliently discard  
-        }
-        if(got_ack) break;
-      }
+      uint8_t attempts = 0;
 
+      while(attempts <= PKT_MAX_RETRIES && !got_ack)
+      {
+        // send (or resend same packet, same seq)
+        uint8_t dummy;
+        while(RS485_ReadByte(&dummy)); // drain any stale bytes before retrying
+        RS485_Send(tx_buffer, tx_len);
+
+        // waiting for matching ACK
+        uint32_t start_time = HAL_GetTick();
+        while((HAL_GetTick() - start_time) < RS485_TIMEOUT_MS)
+        {
+          uint8_t byte;
+          //drain all bytes from ring buffer into parser
+          while(RS485_ReadByte(&byte))
+          {
+            Packet rx_pkt;
+            uint8_t result = PKT_Parse(byte, &rx_pkt);
+            if(result == 1)
+            {
+              // valid packet - check if it's an ACK from Node 2
+              if(rx_pkt.msg_type == MSG_ACK && rx_pkt.node_id == 2 && rx_pkt.seq == seq)
+              {
+                got_ack = 1;
+              }
+            }
+            // result == 2 means CRC error - sliently discard  
+          }
+          if(got_ack) break;
+        }
+        attempts++;
+      }
+    
       if(got_ack)
       {
         // 3 quick blinks = ACK received
-        for(int i = 1; i < 3; i++) {
+        for(int i = 0; i < 3; i++) {
           HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_SET); // toggle LED on ACK
           HAL_Delay(100);
           HAL_GPIO_WritePin(GPIOD, LD4_Pin, GPIO_PIN_RESET);
           HAL_Delay(100);
         }  
       }
-      HAL_Delay(3000); // wait before sending next message
-
-    // #elif NODE_ID == 2
-    //   // Node 2: Receive -> LED -> ACK
-    //   uint8_t rx_buffer[RS485_MSG_MAX];
-    //   uint16_t rx_len;
-
-    //   if (RS485_MessageReady(rx_buffer, &rx_len))
-    //   {
-    //     // Message received
-    //     // 1 long red blink = message received
-    //     HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_SET); // toggle LED on message receive
-    //     HAL_Delay(500);
-    //     HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_RESET);
-    //     HAL_Delay(1); // guard before TX switch
-
-    //     // Send ACK back to sender
-    //     uint8_t ack[] = "ACK\n";
-    //     RS485_Send(ack, 4);
-    //   }
+      else
+      {
+        // solid red blink = all retries failed
+        HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_SET); // toggle LED on failure
+        HAL_Delay(600);
+        HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_RESET);
+        HAL_Delay(600);
+      }
+      seq++;              // increment sequence number for next message
+      HAL_Delay(3000);    // wait before sending next message
 
     #elif NODE_ID == 2
-      // Node 2: parse incoming bytes -> validate -> ACK
+      // Node 2: receive -> parse -> validate -> check sequence -> ACK
       uint8_t byte;
       while(RS485_ReadByte(&byte))
       {
@@ -218,17 +185,16 @@ int main(void)
           // valid packet - check if it's a data message from Node 1
           if(rx_pkt.msg_type == MSG_DATA)
           {
-            // 1 long red blink = good packet
+            // Send ACK back to sender first
+            uint8_t ack_buffer[PKT_MAX_TOTAL];
+            uint16_t ack_len = PKT_Build(NODE_ID, MSG_ACK, rx_pkt.seq, NULL, 0, ack_buffer);
+            HAL_Delay(1); // guard before TX switch
+            RS485_Send(ack_buffer, ack_len);
+            
+            // 1 long red blink = good packet (blink after ACK is sent)
             HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_SET); // toggle LED on message receive
             HAL_Delay(500);
             HAL_GPIO_WritePin(GPIOD, LD5_Pin, GPIO_PIN_RESET);
-            HAL_Delay(1); // guard before TX switch
-
-            // Send ACK back to sender
-            uint8_t ack_buffer[PKT_MAX_TOTAL];
-            uint16_t ack_len = PKT_Build(NODE_ID, MSG_ACK, NULL, 0, ack_buffer);
-            HAL_Delay(1); // guard before TX switch
-            RS485_Send(ack_buffer, ack_len);
           }
         }
         // result == 2 means CRC error - sliently discard 
